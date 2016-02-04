@@ -1,0 +1,255 @@
+---
+title: "INST737_Twitter_Sentiment_Prediction"
+author: "Anuj Sharma, Krishnesh Pujari, Rajesh Gnanasekaran"
+date: "December 8, 2015"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Setting the working directory
+setwd("D:/UMD_Krishnesh/Syllabus/INST737/ProjectINST737")
+require("twitteR")
+require("plyr")
+require("stringr")
+require("data.table")
+require("twitteR")
+require("RCurl")
+require("RJSONIO")
+require("stringr")
+require("Rstem")
+require("sentiment")
+require("zoo")
+require("caret")
+require("e1071")
+require("rpart")
+require("rpart.plot")
+require("kernlab")
+require("ggplot2")
+require("cwhmisc")
+require("nnet")
+require("randomForest")
+require("ROCR")
+require("caret")
+
+tweet = read.csv("data.csv")
+some_txt <-tweet$Tweet
+
+# Add column to extract date
+tweet$Date <- as.Date(tweet$Tweet_Date..UTC., format="%m/%d/%Y")
+#tweet$Time <- format(tweet$Tweet_Date..UTC.,"%H:%M")
+# Add column to extract time
+tweet$Time<-sub(".* ", "", tweet$Tweet_Date..UTC.)
+# Assign Current date
+today<-Sys.Date()
+# Add Column for current date
+tweet$currDate<-format(today)
+
+
+# Add Column with Windows 10 upgrade date
+tweet$upgrdate<-"2015-07-29"
+
+# Difference between tweet date and upgrade date (no. of days)
+tweet$date_diff_upgrd <- as.Date(as.character(tweet$Date))-
+  as.Date(as.character(tweet$upgrdate))
+
+# Changing the format to 'yyyy-mm-dd'
+tweet$Joined.Twitter.Date..UTC.<-as.Date(tweet$Joined.Twitter.Date..UTC.,format="%m/%d/%Y")
+
+# number of weeks since they joined twitter
+tweet$number_weeks<- difftime(tweet$currDate,tweet$Joined.Twitter.Date..UTC. , units = c("weeks"))
+#tweet$number_months<-length(seq(from=tweet$Joined.Twitter.Date..UTC., to=tweet$currDate, by='month')) - 1
+
+#Added Column to display-number of months since joined twitter
+tweet$join_number_months<-(as.yearmon(tweet$currDate)-
+                             as.yearmon(tweet$Joined.Twitter.Date..UTC.))*12
+
+###################################################################
+#Sentiment Analysis to calculate polarity of tweets
+#Please note that the positive_words.txt and negative_words.txt files should be present in the working #directory folder
+
+some_txt <-tweet$Tweet
+
+# function score.sentiment
+score.sentiment = function(sentences, pos.words, neg.words, .progress='none')
+{
+  # Parameters
+  # sentences: vector of text to score
+  # pos.words: vector of words of postive sentiment
+  # neg.words: vector of words of negative sentiment
+  # .progress: passed to laply() to control of progress bar
+  
+  # create simple array of scores with laply
+  scores = laply(sentences,
+                 function(sentence, pos.words, neg.words)
+                 {
+                   # remove punctuation
+                   sentence = gsub("[[:punct:]]", "", sentence)
+                   # remove control characters
+                   sentence = gsub("[[:cntrl:]]", "", sentence)
+                   # remove digits?
+                   sentence = gsub('\\d+', '', sentence)
+                   
+                   # define error handling function when trying tolower
+                   tryTolower = function(x)
+                   {
+                     # create missing value
+                     y = NA
+                     # tryCatch error
+                     try_error = tryCatch(tolower(x), error=function(e) e)
+                     # if not an error
+                     if (!inherits(try_error, "error"))
+                       y = tolower(x)
+                     # result
+                     return(y)
+                   }
+                   # use tryTolower with sapply 
+                   sentence = sapply(sentence, tryTolower)
+                   
+                   # split sentence into words with str_split (stringr package)
+                   
+                   word.list = str_split(sentence, "\\s+")
+                   words = unlist(word.list)
+                   
+                   # compare words to the dictionaries of positive & negative terms
+                   pos.matches = match(words, pos.words)
+                   neg.matches = match(words, neg.words)
+                   
+                   # get the position of the matched term or NA
+                   # we just want a TRUE/FALSE
+                   pos.matches = !is.na(pos.matches)
+                   neg.matches = !is.na(neg.matches)
+                   
+                   # final score
+                   score = sum(pos.matches) - sum(neg.matches)
+                   return(score)
+                 }, pos.words, neg.words, .progress=.progress )
+  
+  # data frame with scores for each sentence
+  scores.df = data.frame(text=sentences, score=scores)
+  return(scores.df)
+}
+
+
+# import positive and negative words
+pos = readLines("positive_words.txt")
+neg = readLines("negative_words.txt")
+
+# apply function score.sentiment
+scores = score.sentiment(some_txt, pos, neg, .progress='text')
+
+# add variables to data frame
+scores$very.pos = as.numeric(scores$score >= 1)
+scores$very.neg = as.numeric(scores$score <= -1)
+
+# scores[, t.pos := ifelse(scores$very.pos >= 1, "Positive")]
+# score[, predict := ifelse(False > True, 1, 2)]
+scores$t.pos <- ifelse(scores$score>= 1,"positive", ifelse(scores$score<=-1, "negative","neutral"))
+
+tweet$polarity<-scores$t.pos
+write.csv(tweet,"win_sentiments.csv")
+
+#########################################################################
+#Feature Engineering to configure additional independent variable
+
+data_txt <- read.csv("win_sentiments.csv")
+data_txt<- as.data.table(data_txt)
+set.seed(1234)
+
+data_txt$Tweets_Scale <- scale(data_txt$Tweets)
+#train$paren_match <- apply(data_txt, 1, function(x) {paren_match(x[''], x['text'])})
+
+data_txt$log_followers <- scale(log(as.numeric(data_txt$Followers) + 1))
+data_txt$log_followed <- scale(log(as.numeric(data_txt$Followed) + 1))
+data_txt$log_favorites <- scale(log(as.numeric(data_txt$Favorites) + 1))
+data_txt$log_Tweets <- scale(log(as.numeric(data_txt$Tweets) + 1))
+data_txt$log_twitter_join_mon <- scale(log(as.numeric(data_txt$join_number_months) + 1))
+data_txt[,Tweet:= as.character(Tweet)]
+
+data_txt$len_tweet <- nchar(data_txt$Tweet)
+# data_txt[, len_tweet_grp := as.factor(ifelse(is.na(nchar(Tweet)),"missing",
+#                                      ifelse(nchar(Tweet) <= 10, "under 10",
+#                                             ifelse(nchar(Tweet) <= 18, "under 18",
+#                                                    ifelse(nchar(Tweet) <= 35, "under 35",
+#                                                           ifelse(nchar(Tweet) <= 60, "under 60",
+#                                                                  ifelse(nchar(Tweet) > 60, "over 60","")))))))]
+# 
+
+#Creating Sample 70:30
+
+
+ind<-sample(2, nrow(data_txt),replace=TRUE, prob=c(0.7,0.3))
+trainData<-data_txt[ind==1,]
+testData<-data_txt[ind==2,]
+
+
+
+```
+
+```{r}
+# Multinomial Logistic Regression
+
+trainData$polarity <- relevel(trainData$polarity, ref = "neutral")
+
+model_logic<-multinom(polarity ~ Date + Relationship + log_favorites + Followers + log_twitter_join_mon + date_diff_upgrd + Edge.Weight, data=trainData)
+
+model1 <- multinom(polarity ~ Relationship + nchar(Tweet) + Edge.Weight + Followers + Tweets + Favorites + date_diff_upgrd + number_weeks, data = trainData)
+summary(model1)
+
+pred<-as.factor(predict(model_logic,testData))
+pred<-as.factor(pred)
+#prediction1 <- predict(, testdata)
+accuracy_all <- mean(pred == testData$polarity)
+pred<-as.data.table(pred)
+
+conf_logic<-confusionMatrix(pred$pred,testData$polarity)
+conf_logic
+
+testData$multi_logistic_polarity <- pred$pred
+```
+```{r}
+# Decision Trees
+fit<-rpart(polarity ~ len_tweet + Relationship + Edge.Weight + log_followers + log_followed + Tweets + log_favorites + Favorites + date_diff_upgrd + number_weeks + join_number_months + log_twitter_join_mon + log_Tweets + Date, data=trainData,control = rpart.control())
+pred<-predict(fit,testData)
+pred<-as.data.table(pred)
+pred$final <- ifelse((pred$negative > pred$neutral) & (pred$negative > pred$positive),"negative", ifelse(pred$neutral > pred$positive, "neutral","positive"))
+acc<-confusionMatrix(pred$final,testData$polarity)
+acc
+
+
+testData$tree_polarity <- pred$final
+```
+```{r}
+# Random Forest
+
+rf_output<- randomForest(polarity ~ Edge.Weight + Relationship + log_followers + log_followed + log_Tweets + log_favorites + len_tweet + date_diff_upgrd + Date + log_twitter_join_mon + number_weeks + join_number_months , importance = TRUE, ntree = 501, data = trainData)
+
+
+rf_output
+rf_pred<-predict(rf_output,testData)
+
+rf_pred<-as.data.table(rf_pred)
+rf_conf<-confusionMatrix(rf_pred$rf_pred,testData$polarity)
+rf_conf
+
+testData$rf_polarity<-rf_pred$rf_pred
+rf_importances=importance(rf_output, scale=FALSE)
+
+confusion=rf_output$confusion
+
+write.csv(testData,"predict_test.csv")
+```
+
+```{r, echo=FALSE}
+
+plot(fit, uniform=TRUE)
+text(fit, cex = 0.8, use.n = TRUE, xpd = TRUE)
+prp(fit)
+prp(fit,varlen=20, extra = 3)
+
+varImpPlot(rf_output, main="Variable Importance")
+```
+

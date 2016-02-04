@@ -1,0 +1,1 @@
+Please drop the data.csv, positive_words.txt, negative_words.txt files on to the working directory which you would mention in the .rmd script before running it.
